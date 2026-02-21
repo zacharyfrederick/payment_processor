@@ -7,6 +7,9 @@
 //!
 //! **Requires the `async` feature.** Run with:
 //!   `cargo run --example async_bridge --features async -- file1.csv file2.csv > accounts.csv`
+#[cfg(feature = "async")]
+use clap::Parser;
+
 
 #[cfg(not(feature = "async"))]
 fn main() {
