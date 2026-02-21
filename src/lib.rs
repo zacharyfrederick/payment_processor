@@ -30,7 +30,10 @@ pub struct Args {
     pub input: PathBuf,
 }
 
-/// Runs the payment processor synchronously: read CSV from file, process, write CSV to stdout.
+/// Runs the payment processor synchronously.
+///
+/// Reads the transactions CSV from the path in `args`, runs the processor, and writes the
+/// accounts CSV to stdout. This is what the default `payment-processor` binary uses.
 pub fn run_sync(args: &Args) -> io::Result<()> {
     let file = File::open(&args.input)?;
     let source = CsvTransactionSource::new(BufReader::new(file));
