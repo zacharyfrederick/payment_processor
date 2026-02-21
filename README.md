@@ -183,6 +183,7 @@ CI uses public GitHub Actions. Third-party actions can be updated by their maint
 | `actions/checkout` | `34e114876b0b11c390a56381ad16ebd13914f8d5` | v4.3.1 — GitHub official |
 | `dtolnay/rust-toolchain` | `e97e2d8cc328f1b50210efc529dca0028893a2d9` | v1 — David Tolnay |
 | `Swatinem/rust-cache` | `779680da715d629ac1d338a641029a2f4372abb5` | v2.8.2 — Armin Ronacher / rust-cache |
+| `EmbarkStudios/cargo-deny-action` | `3fd3802e88374d3fe9159b834c7714ec57d6c979` | v2.0.15 — Embark Studios (license/advisory checks) |
 
 These are maintained by well-known authors or organizations. Pinning to SHAs (rather than tags like `@v4` or `@v2`) ensures the exact revision is used until we explicitly update.
 
