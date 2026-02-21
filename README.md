@@ -12,6 +12,7 @@ A simple transaction processor that reads a CSV of transactions and outputs the 
   <a href="#assumptions">Assumptions</a> &middot;
   <a href="#project-structure">Project Structure</a> &middot;
   <a href="#design-decisions">Design Decisions</a> &middot;
+  <a href="#security">Security</a> &middot;
   <a href="#testing">Testing</a> &middot;
   <a href="#async-example">Async Example</a>
 </p>
@@ -161,6 +162,28 @@ NO CHECKS ARE PERFORMED IN APPLY_UNCHECKED. THEY PURELY UPDATE STATE. We are oka
 
 
 This separation allows the caller to handle errors (log and continue) without the core library needing to know about I/O.
+
+## Security
+
+### Dependencies
+
+This project keeps dependencies minimal and uses well-known, trusted crates:
+
+- **payments-core:** `rust_decimal` (decimal/financial math), `thiserror` (errors).
+- **payment-processor:** `csv`, `serde`, `clap`; optional `tokio` for the async example.
+
+[rust_decimal](https://crates.io/crates/rust_decimal) is the standard choice for decimal arithmetic in Rust and is widely used and maintained. All dependencies are from the official Rust ecosystem (crates.io) and have no known critical security issues at the time of writing. We run `cargo deny` in CI to check licenses and advisories.
+
+### CI and public workflows
+
+CI uses public GitHub Actions. Third-party actions can be updated by their maintainers, which introduces supply-chain risk. This workflow uses:
+
+- `actions/checkout@v4` (GitHub)
+- `dtolnay/rust-toolchain@stable` (David Tolnay)
+- `Swatinem/rust-cache@v2` (Armin Ronacher / rust-cache)
+- `EmbarkStudios/cargo-deny-action@v2` (Embark Studios)
+
+These are maintained by well-known authors or organizations, so the risk is generally considered low. Pinning to major versions (e.g. `@v4`, `@v2`) avoids automatic use of new major releases. For higher assurance, pin to a full commit SHA in the workflow.
 
 ## Testing
 
