@@ -34,7 +34,5 @@ jobs:
       - name: Check dependencies
         uses: EmbarkStudios/cargo-deny-action@3fd3802e88374d3fe9159b834c7714ec57d6c979  # v2.0.15
 
-      - name: Audit dependencies
-        run: |
-          cargo install cargo-audit
-          cargo audit
+      - name: Security audit
+        uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998  # v2.0.0

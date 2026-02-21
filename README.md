@@ -184,8 +184,11 @@ CI uses public GitHub Actions. Third-party actions can be updated by their maint
 | `dtolnay/rust-toolchain` | `e97e2d8cc328f1b50210efc529dca0028893a2d9` | v1 — David Tolnay |
 | `Swatinem/rust-cache` | `779680da715d629ac1d338a641029a2f4372abb5` | v2.8.2 — Armin Ronacher / rust-cache |
 | `EmbarkStudios/cargo-deny-action` | `3fd3802e88374d3fe9159b834c7714ec57d6c979` | v2.0.15 — Embark Studios (license/advisory checks) |
+| `rustsec/audit-check` | `69366f33c96575abad1ee0dba8212993eecbe998` | v2.0.0 — [RustSec](https://github.com/rustsec) (security audit) |
 
 These are maintained by well-known authors or organizations. Pinning to SHAs (rather than tags like `@v4` or `@v2`) ensures the exact revision is used until we explicitly update.
+
+**rustsec/audit-check** is maintained by the [RustSec Project](https://rustsec.org/), which also maintains the [Rust Security Advisory Database](https://github.com/RustSec/advisory-db) and the [cargo-audit](https://github.com/RustSec/cargo-audit) tool. The action runs `cargo-audit` in CI to fail on known vulnerabilities. We trust it because RustSec is the canonical, community-backed source for Rust dependency advisories and the action is the official way to run that check in GitHub Actions.
 
 ## Testing
 
