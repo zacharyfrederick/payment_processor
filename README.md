@@ -1,5 +1,9 @@
 # Payment Processor
 
+![CI](https://github.com/zacharyfrederick/payment_processor/actions/workflows/ci.yml/badge.svg)
+[![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 A simple transaction processor that reads a CSV of transactions and outputs the final state of client accounts.
 
 ## Usage
