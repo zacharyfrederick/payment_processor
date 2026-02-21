@@ -10,7 +10,6 @@
 #[cfg(feature = "async")]
 use clap::Parser;
 
-
 #[cfg(not(feature = "async"))]
 fn main() {
     eprintln!("Build with --features async to enable this example.");
