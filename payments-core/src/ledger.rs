@@ -215,6 +215,22 @@ pub fn apply_chargeback(account: Account, record: TxRecord) -> (Account, TxRecor
 }
 
 // ============================================================================
+// ValidatedTransaction - type-level guarantee that a tx passed validation
+// ============================================================================
+
+/// A transaction that has passed [`Ledger::validate`].
+/// Only constructible inside this crate (in `validate`); cannot be created by callers.
+/// Used so [`apply_unchecked`](Ledger::apply_unchecked) and the event log can only hold validated txs.
+#[derive(Clone)]
+struct ValidatedTransaction(Transaction);
+
+impl ValidatedTransaction {
+    fn into_inner(self) -> Transaction {
+        self.0
+    }
+}
+
+// ============================================================================
 // Ledger - the main state container
 // ============================================================================
 
@@ -225,7 +241,7 @@ pub fn apply_chargeback(account: Account, record: TxRecord) -> (Account, TxRecor
 pub struct Ledger {
     accounts: HashMap<ClientId, Account>,
     transactions: HashMap<TxId, TxRecord>,
-    event_log: Vec<Transaction>,
+    event_log: Vec<ValidatedTransaction>,
 }
 
 impl Ledger {
@@ -252,8 +268,10 @@ impl Ledger {
     }
 
     /// Validates a transaction against the current ledger state.
-    /// Returns Ok(()) if the transaction can be applied, or an error describing why it cannot.
-    pub fn validate(&self, tx: &Transaction) -> Result<(), LedgerError> {
+    /// Returns a [`ValidatedTransaction`] (only creatable here) if the transaction can be applied,
+    /// or an error describing why it cannot. Callers cannot construct `ValidatedTransaction`;
+    /// it is used internally so only validated txs reach the event log and `apply_unchecked`.
+    fn validate(&self, tx: &Transaction) -> Result<ValidatedTransaction, LedgerError> {
         let account = self.accounts.get(&tx.client_id);
 
         match tx.kind {
@@ -314,7 +332,7 @@ impl Ledger {
             }
         }
 
-        Ok(())
+        Ok(ValidatedTransaction(tx.clone()))
     }
 
     /// Validates and applies a transaction to the ledger.
@@ -327,21 +345,17 @@ impl Ledger {
     /// Returns `Ok(())` if the transaction was applied successfully, or an error
     /// describing why the transaction was rejected.
     pub fn process(&mut self, tx: Transaction) -> Result<(), LedgerError> {
-        self.validate(&tx)?;
-        self.event_log.push(tx.clone());
-        self.apply_unchecked(tx);
+        let validated = self.validate(&tx)?;
+        self.event_log.push(validated.clone());
+        self.apply_unchecked(validated);
         Ok(())
     }
 
-    /// Internal apply without validation check.
-    ///
-    /// Only ever called from [`process()`] after `validate(&tx)` has returned `Ok(())`. So:
-    /// - For deposit/withdrawal, `tx.amount` is `Some` (validated by `validate_amount`).
-    /// - For dispute/resolve/chargeback, the tx and account exist in the maps (validated by
-    ///   `validate_tx_record` and `validate_account_unlocked`). The `expect` calls below are
-    ///   therefore safe; we use them to satisfy clippy while making the invariant explicit.
+    /// Applies a validated transaction. Only accepts [`ValidatedTransaction`], which can only
+    /// be obtained from [`validate`](Ledger::validate); callers cannot forge it.
     #[allow(clippy::expect_used)]
-    fn apply_unchecked(&mut self, tx: Transaction) {
+    fn apply_unchecked(&mut self, validated: ValidatedTransaction) {
+        let tx = validated.into_inner();
         match tx.kind {
             TxKind::Deposit => {
                 let amount = normalize_amount(
