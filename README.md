@@ -12,6 +12,7 @@ A simple transaction processor that reads a CSV of transactions and outputs the 
   <a href="#assumptions">Assumptions</a> &middot;
   <a href="#project-structure">Project Structure</a> &middot;
   <a href="#design-decisions">Design Decisions</a> &middot;
+  <a href="#security">Security</a> &middot;
   <a href="#testing">Testing</a> &middot;
   <a href="#async-example">Async Example</a>
 </p>
@@ -161,6 +162,29 @@ NO CHECKS ARE PERFORMED IN APPLY_UNCHECKED. THEY PURELY UPDATE STATE. We are oka
 
 
 This separation allows the caller to handle errors (log and continue) without the core library needing to know about I/O.
+
+## Security
+
+### Dependencies
+
+This project keeps dependencies minimal and uses well-known, trusted crates:
+
+- **payments-core:** `rust_decimal` (decimal/financial math), `thiserror` (errors).
+- **payment-processor:** `csv`, `serde`, `clap`; optional `tokio` for the async example.
+
+[rust_decimal](https://crates.io/crates/rust_decimal) is the standard choice for decimal arithmetic in Rust and is widely used and maintained. All dependencies are from the official Rust ecosystem (crates.io) and have no known critical security issues at the time of writing. We run `cargo deny` in CI to check licenses and advisories.
+
+### CI and public workflows
+
+CI uses public GitHub Actions. Third-party actions can be updated by their maintainers, which introduces supply-chain risk. We pin each action to a **commit SHA** (immutable ref) so the workflow does not automatically pick up changes from the action repo.
+
+| Action | SHA | Version / reason |
+|--------|-----|------------------|
+| `actions/checkout` | `34e114876b0b11c390a56381ad16ebd13914f8d5` | v4.3.1 — GitHub official |
+| `dtolnay/rust-toolchain` | `e97e2d8cc328f1b50210efc529dca0028893a2d9` | v1 — David Tolnay |
+| `Swatinem/rust-cache` | `779680da715d629ac1d338a641029a2f4372abb5` | v2.8.2 — Armin Ronacher / rust-cache |
+
+These are maintained by well-known authors or organizations. Pinning to SHAs (rather than tags like `@v4` or `@v2`) ensures the exact revision is used until we explicitly update.
 
 ## Testing
 
