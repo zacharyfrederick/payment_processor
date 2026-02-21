@@ -1,0 +1,36 @@
+[workspace]
+members = [".", "payments-core"]
+resolver = "2"
+
+[package]
+name = "payment-processor"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = []
+# Enable async runtime and concurrent-streams example (e.g. async_bridge).
+async = ["dep:tokio"]
+
+[dependencies]
+payments-core = { path = "payments-core" }
+csv = "1"
+rust_decimal = "1"
+thiserror = "1"
+serde = { version = "1", features = ["derive"] }
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", optional = true, features = ["rt-multi-thread", "macros", "fs", "io-util", "io-std", "sync"] }
+
+[dev-dependencies]
+rust_decimal_macros = "1"
+
+[workspace.lints.rust]
+warnings = "deny"
+
+[workspace.lints.clippy]
+all = "deny"
+pedantic = "warn"
+
+[profile.release]
+lto = true
+codegen-units = 1
