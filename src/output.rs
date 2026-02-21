@@ -18,13 +18,17 @@ where
     writeln!(writer, "client,available,held,total,locked")?;
 
     for (client_id, account) in accounts {
+        let Some(total) = account.total() else {
+            eprintln!("error: total overflow for client {} (available + held overflow)", client_id);
+            continue;
+        };
         writeln!(
             writer,
             "{},{:.4},{:.4},{:.4},{}",
             client_id,
             account.available,
             account.held,
-            account.total(),
+            total,
             account.locked
         )?;
     }

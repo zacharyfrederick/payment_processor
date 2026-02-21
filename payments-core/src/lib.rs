@@ -32,6 +32,11 @@
 //! }
 //! ```
 
+#![deny(clippy::all)]
+#![deny(clippy::arithmetic_side_effects)] // flags unchecked math operations
+#![deny(clippy::unwrap_used)]             // forces proper error handling
+#![deny(clippy::expect_used)]             // same
+
 pub mod error;
 pub mod ledger;
 pub mod source;
