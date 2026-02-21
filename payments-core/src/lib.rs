@@ -43,6 +43,6 @@ pub mod source;
 pub mod types;
 
 pub use error::LedgerError;
-pub use ledger::Ledger;
+pub use ledger::{Event, Ledger};
 pub use source::TransactionSource;
 pub use types::{Account, ClientId, Transaction, TxId, TxKind, TxRecord, TxState};

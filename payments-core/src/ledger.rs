@@ -228,6 +228,52 @@ impl ValidatedTransaction {
     fn into_inner(self) -> Transaction {
         self.0
     }
+    fn inner(&self) -> &Transaction {
+        &self.0
+    }
+}
+
+// ============================================================================
+// Event - audit log entry (unnormalized)
+// ============================================================================
+
+/// A recorded event: a validated transaction that was applied to the ledger.
+///
+/// **Amounts in the event log are not normalized.** They are stored exactly as received.
+/// Normalization is applied only when updating ledger state in [`apply_unchecked`](Ledger::apply_unchecked).
+/// Use [`Ledger::iter_events`] to read the log; use [`Ledger::from_events`] to replay and rebuild state.
+#[derive(Clone)]
+pub struct Event {
+    tx: ValidatedTransaction,
+}
+
+impl Event {
+    fn from_validated(tx: ValidatedTransaction) -> Self {
+        Self { tx }
+    }
+    fn into_validated(self) -> ValidatedTransaction {
+        self.tx
+    }
+    /// Transaction kind (deposit, withdrawal, dispute, resolve, chargeback).
+    #[must_use]
+    pub fn kind(&self) -> TxKind {
+        self.tx.inner().kind
+    }
+    /// Client this event applies to.
+    #[must_use]
+    pub fn client_id(&self) -> ClientId {
+        self.tx.inner().client_id
+    }
+    /// Transaction id.
+    #[must_use]
+    pub fn tx_id(&self) -> TxId {
+        self.tx.inner().tx_id
+    }
+    /// Amount for deposit/withdrawal; `None` for dispute/resolve/chargeback. **Unnormalized** (as received).
+    #[must_use]
+    pub fn amount(&self) -> Option<Decimal> {
+        self.tx.inner().amount
+    }
 }
 
 // ============================================================================
@@ -241,7 +287,7 @@ impl ValidatedTransaction {
 pub struct Ledger {
     accounts: HashMap<ClientId, Account>,
     transactions: HashMap<TxId, TxRecord>,
-    event_log: Vec<ValidatedTransaction>,
+    event_log: Vec<Event>,
 }
 
 impl Ledger {
@@ -346,9 +392,43 @@ impl Ledger {
     /// describing why the transaction was rejected.
     pub fn process(&mut self, tx: Transaction) -> Result<(), LedgerError> {
         let validated = self.validate(&tx)?;
-        self.event_log.push(validated.clone());
+        self.event_log
+            .push(Event::from_validated(validated.clone()));
         self.apply_unchecked(validated);
         Ok(())
+    }
+
+    /// Returns an iterator over the event log (validated transactions as applied).
+    /// **Amounts in events are unnormalized** (stored as received).
+    pub fn iter_events(&self) -> impl Iterator<Item = &Event> {
+        self.event_log.iter()
+    }
+
+    /// Builds a ledger by replaying events in order. State is rebuilt from scratch;
+    /// normalization is applied at apply time as in normal processing.
+    #[must_use]
+    pub fn from_events(events: impl IntoIterator<Item = Event>) -> Self {
+        let mut ledger = Self::new();
+        for event in events {
+            ledger.event_log.push(event.clone());
+            ledger.apply_unchecked(event.into_validated());
+        }
+        ledger
+    }
+
+    /// Builds a ledger from a snapshot of accounts and an event log (for audit).
+    /// The `transactions` map is left empty, so further processing that depends on
+    /// existing deposit records (e.g. dispute/resolve/chargeback) may fail.
+    #[must_use]
+    pub fn from_accounts_and_events(
+        accounts: HashMap<ClientId, Account>,
+        events: impl IntoIterator<Item = Event>,
+    ) -> Self {
+        Self {
+            accounts,
+            transactions: HashMap::new(),
+            event_log: events.into_iter().collect(),
+        }
     }
 
     /// Applies a validated transaction. Only accepts [`ValidatedTransaction`], which can only

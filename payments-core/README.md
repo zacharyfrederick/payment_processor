@@ -45,7 +45,8 @@ for (client_id, account) in ledger.iter_accounts() {
 
 | Type | Purpose |
 |------|---------|
-| [`Ledger`] | Central state: create with `Ledger::new()`, apply with `process()`, read with `iter_accounts()`. |
+| [`Ledger`] | Central state: create with `Ledger::new()`, apply with `process()`, read with `iter_accounts()`, `iter_events()`. Replay via `from_events()`; audit via `from_accounts_and_events()`. |
+| [`Event`] | A validated transaction that was applied; stored in the event log. **Amounts are unnormalized** (as received). Accessors: `kind()`, `client_id()`, `tx_id()`, `amount()`. |
 | [`Transaction`] | One input event: `kind`, `client_id`, `tx_id`, optional `amount`. |
 | [`Account`] | Per-client state: `available`, `held`, `locked`; `total()` = available + held. |
 | [`TxKind`] | `Deposit`, `Withdrawal`, `Dispute`, `Resolve`, `Chargeback`. |

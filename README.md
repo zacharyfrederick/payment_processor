@@ -154,14 +154,21 @@ The `payments-core` crate has no I/O dependencies. All validation and state muta
 
 ### Validation/Apply Split
 
-Transactions are processed in two phases:
-1. `validate()` — checks all invariants, returns `Result<(), LedgerError>`
-2. `apply_unchecked()` — performs the mutation, only called if validation passed
+Transactions are processed in three phases:
+1. `validate()` — checks all invariants, returns a validated tx (only creatable inside the crate)
+2.  Create an event from the validated tx and then append it to the log
+2. `apply_unchecked()` — performs the mutation, only called with a validated tx
 
-NO CHECKS ARE PERFORMED IN APPLY_UNCHECKED. THEY PURELY UPDATE STATE. We are okay with this arrangement because only `process` and `validate` are exposed publicly. So to update state you must call process which performs the necessary validations based on the Tx kind.
-
+NO CHECKS ARE PERFORMED IN APPLY_UNCHECKED. THEY PURELY UPDATE STATE. The type system enforces that only validated transactions reach apply and the event log.
 
 This separation allows the caller to handle errors (log and continue) without the core library needing to know about I/O.
+
+### Event log and auditability
+
+The ledger keeps an **event log** of every applied transaction (`Ledger::iter_events()` in payments-core). **Amounts in the event log are not normalized** — they are stored as received. Normalization is applied only when updating ledger state in apply.
+
+- **Replay:** `Ledger::from_events(events)` builds a ledger by replaying events in order (state rebuilt from scratch).
+- **Audit:** `Ledger::from_accounts_and_events(accounts, events)` builds a ledger from a snapshot of accounts and an event log for inspection; the internal deposit-record map is empty, so further dispute/resolve/chargeback processing may not be supported.
 
 ## Security
 
