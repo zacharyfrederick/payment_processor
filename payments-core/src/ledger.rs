@@ -334,13 +334,20 @@ impl Ledger {
     }
 
     /// Internal apply without validation check.
-    /// Only called after `validate()` has passed in `process()`.
-    #[allow(clippy::unwrap_used)]
+    ///
+    /// Only ever called from [`process()`] after `validate(&tx)` has returned `Ok(())`. So:
+    /// - For deposit/withdrawal, `tx.amount` is `Some` (validated by `validate_amount`).
+    /// - For dispute/resolve/chargeback, the tx and account exist in the maps (validated by
+    ///   `validate_tx_record` and `validate_account_unlocked`). The `expect` calls below are
+    ///   therefore safe; we use them to satisfy clippy while making the invariant explicit.
     #[allow(clippy::expect_used)]
     fn apply_unchecked(&mut self, tx: Transaction) {
         match tx.kind {
             TxKind::Deposit => {
-                let amount = normalize_amount(tx.amount.unwrap());
+                let amount = normalize_amount(
+                    tx.amount
+                        .expect("validate_amount ensures amount is Some for deposit"),
+                );
                 let account = self.get_or_create_account(tx.client_id);
                 *account = apply_deposit(account, amount);
                 self.transactions.insert(
@@ -354,30 +361,51 @@ impl Ledger {
             }
 
             TxKind::Withdrawal => {
-                let amount = normalize_amount(tx.amount.unwrap());
+                let amount = normalize_amount(
+                    tx.amount
+                        .expect("validate_amount ensures amount is Some for withdrawal"),
+                );
                 let account = self.get_or_create_account(tx.client_id);
                 *account = apply_withdrawal(account, amount);
             }
 
             TxKind::Dispute => {
-                let record = self.transactions.remove(&tx.tx_id).unwrap();
-                let account = self.accounts.remove(&tx.client_id).unwrap();
+                let record = self
+                    .transactions
+                    .remove(&tx.tx_id)
+                    .expect("validate_tx_record ensured this tx exists and is active");
+                let account = self
+                    .accounts
+                    .remove(&tx.client_id)
+                    .expect("validate_account_unlocked ensured this account exists");
                 let (new_account, new_record) = apply_dispute(account, record);
                 self.accounts.insert(tx.client_id, new_account);
                 self.transactions.insert(tx.tx_id, new_record);
             }
 
             TxKind::Resolve => {
-                let record = self.transactions.remove(&tx.tx_id).unwrap();
-                let account = self.accounts.remove(&tx.client_id).unwrap();
+                let record = self
+                    .transactions
+                    .remove(&tx.tx_id)
+                    .expect("validate_tx_record ensured this tx exists and is disputed");
+                let account = self
+                    .accounts
+                    .remove(&tx.client_id)
+                    .expect("validate_account_unlocked ensured this account exists");
                 let (new_account, new_record) = apply_resolve(account, record);
                 self.accounts.insert(tx.client_id, new_account);
                 self.transactions.insert(tx.tx_id, new_record);
             }
 
             TxKind::Chargeback => {
-                let record = self.transactions.remove(&tx.tx_id).unwrap();
-                let account = self.accounts.remove(&tx.client_id).unwrap();
+                let record = self
+                    .transactions
+                    .remove(&tx.tx_id)
+                    .expect("validate_tx_record ensured this tx exists and is disputed");
+                let account = self
+                    .accounts
+                    .remove(&tx.client_id)
+                    .expect("validate_account_unlocked ensured this account exists");
                 let (new_account, new_record) = apply_chargeback(account, record);
                 self.accounts.insert(tx.client_id, new_account);
                 self.transactions.insert(tx.tx_id, new_record);
