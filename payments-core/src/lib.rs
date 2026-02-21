@@ -4,6 +4,33 @@
 //! [`Ledger::process()`], and use [`Ledger::iter_accounts()`] to read state (e.g. for
 //! serialization). This crate re-exports types ([`Account`], [`Transaction`], etc.), [`LedgerError`],
 //! and the [`TransactionSource`] trait for pluggable input.
+//!
+//! # Example
+//!
+//! ```
+//! use payments_core::{ClientId, Ledger, Transaction, TxId, TxKind};
+//! use rust_decimal_macros::dec;
+//!
+//! let mut ledger = Ledger::new();
+//!
+//! ledger.process(Transaction {
+//!     kind: TxKind::Deposit,
+//!     client_id: ClientId(1),
+//!     tx_id: TxId(1),
+//!     amount: Some(dec!(100.50)),
+//! }).ok();
+//! ledger.process(Transaction {
+//!     kind: TxKind::Withdrawal,
+//!     client_id: ClientId(1),
+//!     tx_id: TxId(2),
+//!     amount: Some(dec!(25.25)),
+//! }).ok();
+//!
+//! for (client_id, account) in ledger.iter_accounts() {
+//!     println!("client {}: available={}, held={}, locked={}",
+//!         client_id, account.available, account.held, account.locked);
+//! }
+//! ```
 
 pub mod error;
 pub mod ledger;
