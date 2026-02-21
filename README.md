@@ -176,14 +176,15 @@ This project keeps dependencies minimal and uses well-known, trusted crates:
 
 ### CI and public workflows
 
-CI uses public GitHub Actions. Third-party actions can be updated by their maintainers, which introduces supply-chain risk. This workflow uses:
+CI uses public GitHub Actions. Third-party actions can be updated by their maintainers, which introduces supply-chain risk. We pin each action to a **commit SHA** (immutable ref) so the workflow does not automatically pick up changes from the action repo.
 
-- `actions/checkout@v4` (GitHub)
-- `dtolnay/rust-toolchain@stable` (David Tolnay)
-- `Swatinem/rust-cache@v2` (Armin Ronacher / rust-cache)
-- `EmbarkStudios/cargo-deny-action@v2` (Embark Studios)
+| Action | SHA | Version / reason |
+|--------|-----|------------------|
+| `actions/checkout` | `34e114876b0b11c390a56381ad16ebd13914f8d5` | v4.3.1 — GitHub official |
+| `dtolnay/rust-toolchain` | `e97e2d8cc328f1b50210efc529dca0028893a2d9` | v1 — David Tolnay |
+| `Swatinem/rust-cache` | `779680da715d629ac1d338a641029a2f4372abb5` | v2.8.2 — Armin Ronacher / rust-cache |
 
-These are maintained by well-known authors or organizations, so the risk is generally considered low. Pinning to major versions (e.g. `@v4`, `@v2`) avoids automatic use of new major releases. For higher assurance, pin to a full commit SHA in the workflow.
+These are maintained by well-known authors or organizations. Pinning to SHAs (rather than tags like `@v4` or `@v2`) ensures the exact revision is used until we explicitly update.
 
 ## Testing
 
