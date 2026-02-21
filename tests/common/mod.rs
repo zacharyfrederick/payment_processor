@@ -34,9 +34,9 @@ pub fn normalize_accounts_csv(s: &str) -> String {
     // Canonicalize numeric columns (index 1=available, 2=held, 3=total)
     for row in &mut rows {
         if row.len() >= 4 {
-            for i in 1..=3 {
-                if let Ok(n) = row[i].parse::<f64>() {
-                    row[i] = format!("{:.4}", n);
+            for cell in row.iter_mut().skip(1).take(3) {
+                if let Ok(n) = cell.parse::<f64>() {
+                    *cell = format!("{:.4}", n);
                 }
             }
         }
