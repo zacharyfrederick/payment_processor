@@ -8,6 +8,8 @@
 //! **Requires the `async` feature.** Run with:
 //!   `cargo run --example async_bridge --features async -- file1.csv file2.csv > accounts.csv`
 
+use clap::Parser;
+
 #[cfg(not(feature = "async"))]
 fn main() {
     eprintln!("Build with --features async to enable this example.");
@@ -77,9 +79,9 @@ mod async_bridge {
             let _ = h.await;
         }
 
-        let ledger = processor.await.map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::Other, format!("processor join: {e}"))
-        })?;
+        let ledger = processor
+            .await
+            .map_err(|e| std::io::Error::other(format!("processor join: {e}")))?;
 
         let mut buffer = Vec::new();
         write_accounts_csv(&mut buffer, ledger.iter_accounts())?;
