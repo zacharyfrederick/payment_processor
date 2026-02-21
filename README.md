@@ -229,7 +229,7 @@ The `async_bridge` example simulates many concurrent streams (e.g. TCP connectio
 **Feature gating:** The async runtime (tokio) is optional so the default build stays dependency-light. Enable it with the `async` feature. Without it, the example binary still compiles but exits with instructions:
 
 ```shell
-cargo run --example async_bridge --features async -- file1.csv file2.csv > accounts.csv
+cargo run --example async_bridge --features async -- tests/fixtures/async_file1.csv tests/fixtures/async_file2.csv > accounts.csv
 ```
 
 In `Cargo.toml`, `tokio` is an optional dependency and `async = ["dep:tokio"]`; only when you pass `--features async` is tokio built and the example’s async code included.
