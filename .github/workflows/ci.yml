@@ -29,3 +29,6 @@ jobs:
 
       - name: build
         run: cargo build --release
+
+      - name: Check dependencies
+        uses: EmbarkStudios/cargo-deny-action@v2
