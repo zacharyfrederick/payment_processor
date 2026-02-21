@@ -200,6 +200,9 @@ pub fn apply_chargeback(account: Account, record: TxRecord) -> (Account, TxRecor
 // ============================================================================
 
 /// The core ledger that tracks all accounts and transactions.
+///
+/// This is the main stateful type for the engine. Use [`process`](Ledger::process) as the primary
+/// mutation API (it validates then applies each transaction).
 pub struct Ledger {
     accounts: HashMap<ClientId, Account>,
     transactions: HashMap<TxId, TxRecord>,
@@ -218,6 +221,8 @@ impl Ledger {
     }
 
     /// Returns an iterator over all accounts.
+    ///
+    /// Intended for serialization or output (e.g. writing the accounts CSV).
     pub fn iter_accounts(&self) -> impl Iterator<Item = (&ClientId, &Account)> {
         self.accounts.iter()
     }

@@ -96,6 +96,7 @@ impl fmt::Display for TxKind {
 }
 
 /// Error when parsing a transaction kind from a string.
+/// The inner value is the unrecognized transaction type string.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseTxKindError(pub String);
 
@@ -126,8 +127,11 @@ impl FromStr for TxKind {
 /// Only deposits are stored because only deposits can be disputed.
 #[derive(Debug, Clone)]
 pub struct TxRecord {
+    /// Client that owns this deposit record.
     pub client_id: ClientId,
+    /// Amount of the deposit.
     pub amount: Decimal,
+    /// Current state in the dispute lifecycle (active, disputed, resolved, charged back).
     pub state: TxState,
 }
 
@@ -164,8 +168,11 @@ impl Default for Account {
 /// An incoming transaction to be processed by the ledger.
 #[derive(Debug, Clone)]
 pub struct Transaction {
+    /// Transaction type (deposit, withdrawal, dispute, resolve, chargeback).
     pub kind: TxKind,
+    /// Client this transaction applies to.
     pub client_id: ClientId,
+    /// Unique transaction id; must be unique across all deposits.
     pub tx_id: TxId,
     /// Amount for deposit/withdrawal transactions. None for dispute/resolve/chargeback.
     pub amount: Option<Decimal>,
