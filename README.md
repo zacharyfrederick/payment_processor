@@ -6,6 +6,16 @@
 
 A simple transaction processor that reads a CSV of transactions and outputs the final state of client accounts.
 
+<p align="center">
+  <a href="#usage">Usage</a> &middot;
+  <a href="#transaction-types">Transaction Types</a> &middot;
+  <a href="#assumptions">Assumptions</a> &middot;
+  <a href="#project-structure">Project Structure</a> &middot;
+  <a href="#design-decisions">Design Decisions</a> &middot;
+  <a href="#testing">Testing</a> &middot;
+  <a href="#async-example">Async Example</a>
+</p>
+
 ## Usage
 
 ```shell
