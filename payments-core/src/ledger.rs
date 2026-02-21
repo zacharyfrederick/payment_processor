@@ -76,6 +76,20 @@ pub fn validate_deposit_no_overflow(
         .ok_or(LedgerError::Overflow)
 }
 
+/// Validates that after a deposit, total (available + held + amount) would not overflow.
+/// Use this instead of only validate_deposit_no_overflow to avoid total() overflowing when held is large.
+pub fn validate_deposit_total_no_overflow(
+    available: Decimal,
+    held: Decimal,
+    amount: Decimal,
+) -> Result<(), LedgerError> {
+    available
+        .checked_add(held)
+        .and_then(|total| total.checked_add(amount))
+        .map(|_| ())
+        .ok_or(LedgerError::Overflow)
+}
+
 /// Validates that withdrawal (available - amount) would not underflow.
 pub fn validate_withdrawal_no_overflow(
     available: Decimal,
@@ -126,6 +140,7 @@ pub fn validate_chargeback_no_overflow(held: Decimal, amount: Decimal) -> Result
 
 /// Applies a deposit to an account.
 #[must_use]
+#[allow(clippy::arithmetic_side_effects)] // Has been validated before calling this function
 pub fn apply_deposit(account: &Account, amount: Decimal) -> Account {
     Account {
         available: account.available + amount,
@@ -136,6 +151,7 @@ pub fn apply_deposit(account: &Account, amount: Decimal) -> Account {
 
 /// Applies a withdrawal to an account.
 #[must_use]
+#[allow(clippy::arithmetic_side_effects)] // Has been validated before calling this function
 pub fn apply_withdrawal(account: &Account, amount: Decimal) -> Account {
     Account {
         available: account.available - amount,
@@ -146,6 +162,7 @@ pub fn apply_withdrawal(account: &Account, amount: Decimal) -> Account {
 
 /// Applies a dispute to an account and transaction record.
 #[must_use]
+#[allow(clippy::arithmetic_side_effects)] // Has been validated before calling this function
 pub fn apply_dispute(account: Account, record: TxRecord) -> (Account, TxRecord) {
     let amount = record.amount;
     (
@@ -163,6 +180,7 @@ pub fn apply_dispute(account: Account, record: TxRecord) -> (Account, TxRecord) 
 
 /// Applies a resolve to an account and transaction record.
 #[must_use]
+#[allow(clippy::arithmetic_side_effects)] // Has been validated before calling this function
 pub fn apply_resolve(account: Account, record: TxRecord) -> (Account, TxRecord) {
     let amount = record.amount;
     (
@@ -180,6 +198,7 @@ pub fn apply_resolve(account: Account, record: TxRecord) -> (Account, TxRecord) 
 
 /// Applies a chargeback to an account and transaction record.
 #[must_use]
+#[allow(clippy::arithmetic_side_effects)] // Has been validated before calling this function
 pub fn apply_chargeback(account: Account, record: TxRecord) -> (Account, TxRecord) {
     let amount = record.amount;
     (
@@ -249,7 +268,8 @@ impl Ledger {
                     }
                 }
                 let available = account.map(|a| a.available).unwrap_or(Decimal::ZERO);
-                validate_deposit_no_overflow(available, amount)?;
+                let held = account.map(|a| a.held).unwrap_or(Decimal::ZERO);
+                validate_deposit_total_no_overflow(available, held, amount)?;
             }
 
             TxKind::Withdrawal => {
@@ -314,11 +334,20 @@ impl Ledger {
     }
 
     /// Internal apply without validation check.
-    /// Only called after `validate()` has passed in `process()`.
+    ///
+    /// Only ever called from [`process()`] after `validate(&tx)` has returned `Ok(())`. So:
+    /// - For deposit/withdrawal, `tx.amount` is `Some` (validated by `validate_amount`).
+    /// - For dispute/resolve/chargeback, the tx and account exist in the maps (validated by
+    ///   `validate_tx_record` and `validate_account_unlocked`). The `expect` calls below are
+    ///   therefore safe; we use them to satisfy clippy while making the invariant explicit.
+    #[allow(clippy::expect_used)]
     fn apply_unchecked(&mut self, tx: Transaction) {
         match tx.kind {
             TxKind::Deposit => {
-                let amount = normalize_amount(tx.amount.unwrap());
+                let amount = normalize_amount(
+                    tx.amount
+                        .expect("validate_amount ensures amount is Some for deposit"),
+                );
                 let account = self.get_or_create_account(tx.client_id);
                 *account = apply_deposit(account, amount);
                 self.transactions.insert(
@@ -332,30 +361,51 @@ impl Ledger {
             }
 
             TxKind::Withdrawal => {
-                let amount = normalize_amount(tx.amount.unwrap());
+                let amount = normalize_amount(
+                    tx.amount
+                        .expect("validate_amount ensures amount is Some for withdrawal"),
+                );
                 let account = self.get_or_create_account(tx.client_id);
                 *account = apply_withdrawal(account, amount);
             }
 
             TxKind::Dispute => {
-                let record = self.transactions.remove(&tx.tx_id).unwrap();
-                let account = self.accounts.remove(&tx.client_id).unwrap();
+                let record = self
+                    .transactions
+                    .remove(&tx.tx_id)
+                    .expect("validate_tx_record ensured this tx exists and is active");
+                let account = self
+                    .accounts
+                    .remove(&tx.client_id)
+                    .expect("validate_account_unlocked ensured this account exists");
                 let (new_account, new_record) = apply_dispute(account, record);
                 self.accounts.insert(tx.client_id, new_account);
                 self.transactions.insert(tx.tx_id, new_record);
             }
 
             TxKind::Resolve => {
-                let record = self.transactions.remove(&tx.tx_id).unwrap();
-                let account = self.accounts.remove(&tx.client_id).unwrap();
+                let record = self
+                    .transactions
+                    .remove(&tx.tx_id)
+                    .expect("validate_tx_record ensured this tx exists and is disputed");
+                let account = self
+                    .accounts
+                    .remove(&tx.client_id)
+                    .expect("validate_account_unlocked ensured this account exists");
                 let (new_account, new_record) = apply_resolve(account, record);
                 self.accounts.insert(tx.client_id, new_account);
                 self.transactions.insert(tx.tx_id, new_record);
             }
 
             TxKind::Chargeback => {
-                let record = self.transactions.remove(&tx.tx_id).unwrap();
-                let account = self.accounts.remove(&tx.client_id).unwrap();
+                let record = self
+                    .transactions
+                    .remove(&tx.tx_id)
+                    .expect("validate_tx_record ensured this tx exists and is disputed");
+                let account = self
+                    .accounts
+                    .remove(&tx.client_id)
+                    .expect("validate_account_unlocked ensured this account exists");
                 let (new_account, new_record) = apply_chargeback(account, record);
                 self.accounts.insert(tx.client_id, new_account);
                 self.transactions.insert(tx.tx_id, new_record);
@@ -423,7 +473,7 @@ mod tests {
         let a = apply_deposit(&base, dec!(2.5));
         assert_eq!(a.available, dec!(3.5));
         assert_eq!(a.held, dec!(0.0));
-        assert_eq!(a.total(), dec!(3.5));
+        assert_eq!(a.total().unwrap(), dec!(3.5));
     }
 
     #[test]
@@ -432,7 +482,7 @@ mod tests {
         let a = apply_withdrawal(&base, dec!(1.0));
         assert_eq!(a.available, dec!(2.5));
         assert_eq!(a.held, dec!(0.0));
-        assert_eq!(a.total(), dec!(2.5));
+        assert_eq!(a.total().unwrap(), dec!(2.5));
     }
 
     #[test]
@@ -441,7 +491,7 @@ mod tests {
         let (a, r) = apply_dispute(account(dec!(5.0), dec!(0.0)), record);
         assert_eq!(a.available, dec!(3.0));
         assert_eq!(a.held, dec!(2.0));
-        assert_eq!(a.total(), dec!(5.0));
+        assert_eq!(a.total().unwrap(), dec!(5.0));
         assert_eq!(r.state, TxState::Disputed);
     }
 
@@ -451,7 +501,7 @@ mod tests {
         let (a, r) = apply_resolve(account(dec!(3.0), dec!(2.0)), record);
         assert_eq!(a.available, dec!(5.0));
         assert_eq!(a.held, dec!(0.0));
-        assert_eq!(a.total(), dec!(5.0));
+        assert_eq!(a.total().unwrap(), dec!(5.0));
         assert_eq!(r.state, TxState::Resolved);
     }
 
@@ -461,7 +511,7 @@ mod tests {
         let (a, r) = apply_chargeback(account(dec!(3.0), dec!(2.0)), record);
         assert_eq!(a.available, dec!(3.0));
         assert_eq!(a.held, dec!(0.0));
-        assert_eq!(a.total(), dec!(3.0));
+        assert_eq!(a.total().unwrap(), dec!(3.0));
         assert!(a.locked);
         assert_eq!(r.state, TxState::ChargedBack);
     }
@@ -515,6 +565,16 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_deposit_total_no_overflow_rejects() {
+        // available + held + amount would overflow even though available + amount would not
+        assert!(validate_deposit_total_no_overflow(dec!(0.0), Decimal::MAX, dec!(1.0)).is_err());
+        assert!(matches!(
+            validate_deposit_total_no_overflow(dec!(0.0), Decimal::MAX, dec!(1.0)),
+            Err(LedgerError::Overflow)
+        ));
+    }
+
+    #[test]
     fn test_ledger_validate_deposit_overflow() {
         let mut ledger = Ledger::new();
         ledger
@@ -525,6 +585,22 @@ mod tests {
             client_id: ClientId(1),
             tx_id: TxId(2),
             amount: Some(OVERFLOW_AMOUNT),
+        };
+        assert!(matches!(ledger.process(tx), Err(LedgerError::Overflow)));
+    }
+
+    #[test]
+    fn test_ledger_validate_deposit_total_overflow() {
+        // Total (available + held) would overflow after deposit; available + amount alone would not
+        let mut ledger = Ledger::new();
+        ledger
+            .accounts
+            .insert(ClientId(1), account(dec!(0.0), Decimal::MAX));
+        let tx = Transaction {
+            kind: TxKind::Deposit,
+            client_id: ClientId(1),
+            tx_id: TxId(1),
+            amount: Some(dec!(1.0)),
         };
         assert!(matches!(ledger.process(tx), Err(LedgerError::Overflow)));
     }
@@ -707,7 +783,7 @@ mod tests {
         let account = ledger.accounts.get(&ClientId(1)).unwrap();
         assert_eq!(account.available, dec!(0.0));
         assert_eq!(account.held, dec!(5.0));
-        assert_eq!(account.total(), dec!(5.0));
+        assert_eq!(account.total().unwrap(), dec!(5.0));
 
         let resolve = Transaction {
             kind: TxKind::Resolve,
@@ -720,7 +796,7 @@ mod tests {
         let account = ledger.accounts.get(&ClientId(1)).unwrap();
         assert_eq!(account.available, dec!(5.0));
         assert_eq!(account.held, dec!(0.0));
-        assert_eq!(account.total(), dec!(5.0));
+        assert_eq!(account.total().unwrap(), dec!(5.0));
         assert!(!account.locked);
     }
 
@@ -756,7 +832,7 @@ mod tests {
         assert!(account.locked);
         assert_eq!(account.available, dec!(0.0));
         assert_eq!(account.held, dec!(0.0));
-        assert_eq!(account.total(), dec!(0.0));
+        assert_eq!(account.total().unwrap(), dec!(0.0));
     }
 
     #[test]
@@ -900,7 +976,7 @@ mod tests {
         };
         ledger.process(deposit).unwrap();
         assert_eq!(
-            ledger.accounts.get(&ClientId(1)).unwrap().total(),
+            ledger.accounts.get(&ClientId(1)).unwrap().total().unwrap(),
             dec!(10.0)
         );
 
@@ -912,7 +988,7 @@ mod tests {
         };
         ledger.process(withdrawal).unwrap();
         assert_eq!(
-            ledger.accounts.get(&ClientId(1)).unwrap().total(),
+            ledger.accounts.get(&ClientId(1)).unwrap().total().unwrap(),
             dec!(7.0)
         );
 
@@ -924,7 +1000,7 @@ mod tests {
         };
         ledger.process(deposit2).unwrap();
         assert_eq!(
-            ledger.accounts.get(&ClientId(1)).unwrap().total(),
+            ledger.accounts.get(&ClientId(1)).unwrap().total().unwrap(),
             dec!(12.0)
         );
 
@@ -938,7 +1014,7 @@ mod tests {
         let account = ledger.accounts.get(&ClientId(1)).unwrap();
         assert_eq!(account.available, dec!(7.0));
         assert_eq!(account.held, dec!(5.0));
-        assert_eq!(account.total(), dec!(12.0));
+        assert_eq!(account.total().unwrap(), dec!(12.0));
 
         let resolve = Transaction {
             kind: TxKind::Resolve,
@@ -950,7 +1026,7 @@ mod tests {
         let account = ledger.accounts.get(&ClientId(1)).unwrap();
         assert_eq!(account.available, dec!(12.0));
         assert_eq!(account.held, dec!(0.0));
-        assert_eq!(account.total(), dec!(12.0));
+        assert_eq!(account.total().unwrap(), dec!(12.0));
     }
 
     // ========================================================================
@@ -1008,7 +1084,7 @@ mod tests {
         let account = ledger.accounts.get(&ClientId(1)).unwrap();
         assert_eq!(account.available, dec!(-5.0));
         assert_eq!(account.held, dec!(10.0));
-        assert_eq!(account.total(), dec!(5.0));
+        assert_eq!(account.total().unwrap(), dec!(5.0));
     }
 
     #[test]
@@ -1043,7 +1119,7 @@ mod tests {
         let account = ledger.accounts.get(&ClientId(1)).unwrap();
         assert_eq!(account.available, dec!(20.0)); // Only deposit2 available
         assert_eq!(account.held, dec!(10.0)); // deposit1 held
-        assert_eq!(account.total(), dec!(30.0));
+        assert_eq!(account.total().unwrap(), dec!(30.0));
     }
 
     #[test]

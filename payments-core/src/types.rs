@@ -147,11 +147,11 @@ pub struct Account {
 }
 
 impl Account {
-    /// Returns total funds (available + held).
+    /// Returns total funds (available + held), or `None` if the sum would overflow.
     /// This is a derived value to enforce the invariant that total == available + held.
     #[must_use]
-    pub fn total(&self) -> Decimal {
-        self.available + self.held
+    pub fn total(&self) -> Option<Decimal> {
+        self.available.checked_add(self.held)
     }
 }
 
@@ -224,7 +224,7 @@ mod tests {
             held: Decimal::new(50, 2),
             locked: false,
         };
-        assert_eq!(account.total(), Decimal::new(150, 2));
+        assert_eq!(account.total(), Some(Decimal::new(150, 2)));
     }
 
     #[test]
