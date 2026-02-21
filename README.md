@@ -16,6 +16,10 @@ A simple transaction processor that reads a CSV of transactions and outputs the 
   <a href="#async-example">Async Example</a>
 </p>
 
+## AI Tools Used
+- Claude (Web app)
+- Cursor
+
 ## Usage
 
 ```shell
