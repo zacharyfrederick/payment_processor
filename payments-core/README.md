@@ -20,14 +20,14 @@ use rust_decimal_macros::dec;
 
 let mut ledger = Ledger::new();
 
-// Process a few transactions
-ledger.process(Transaction {
+// Submit a few transactions
+ledger.submit(Transaction {
     kind: TxKind::Deposit,
     client_id: ClientId(1),
     tx_id: TxId(1),
     amount: Some(dec!(100.50)),
 }).ok();
-ledger.process(Transaction {
+ledger.submit(Transaction {
     kind: TxKind::Withdrawal,
     client_id: ClientId(1),
     tx_id: TxId(2),
@@ -45,8 +45,8 @@ for (client_id, account) in ledger.iter_accounts() {
 
 | Type | Purpose |
 |------|---------|
-| [`Ledger`] | Central state: create with `Ledger::new()`, apply with `process()`, read with `iter_accounts()`, `iter_events()`. Replay via `from_events()`; audit via `from_accounts_and_events()`. |
-| [`Event`] | A validated transaction that was applied; stored in the event log. **Amounts are unnormalized** (as received). Accessors: `kind()`, `client_id()`, `tx_id()`, `amount()`. |
+| [`Ledger`] | Central state: create with `Ledger::new()`, apply with `submit()`, read with `iter_accounts()`, `iter_events()`. Replay via `replay()`. |
+| [`Event`] | A recorded transaction in the event log; holds `tx: Transaction`. **Amounts are unnormalized** (as received). |
 | [`Transaction`] | One input event: `kind`, `client_id`, `tx_id`, optional `amount`. |
 | [`Account`] | Per-client state: `available`, `held`, `locked`; `total()` = available + held. |
 | [`TxKind`] | `Deposit`, `Withdrawal`, `Dispute`, `Resolve`, `Chargeback`. |

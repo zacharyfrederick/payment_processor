@@ -1,7 +1,7 @@
 //! Core payment and ledger logic with no I/O dependencies.
 //!
 //! The main entry point is [`Ledger`]: create with [`Ledger::new()`], apply transactions with
-//! [`Ledger::process()`], and use [`Ledger::iter_accounts()`] to read state (e.g. for
+//! [`Ledger::submit()`], and use [`Ledger::iter_accounts()`] to read state (e.g. for
 //! serialization). This crate re-exports types ([`Account`], [`Transaction`], etc.), [`LedgerError`],
 //! and the [`TransactionSource`] trait for pluggable input.
 //!
@@ -13,13 +13,13 @@
 //!
 //! let mut ledger = Ledger::new();
 //!
-//! ledger.process(Transaction {
+//! ledger.submit(Transaction {
 //!     kind: TxKind::Deposit,
 //!     client_id: ClientId(1),
 //!     tx_id: TxId(1),
 //!     amount: Some(dec!(100.50)),
 //! }).ok();
-//! ledger.process(Transaction {
+//! ledger.submit(Transaction {
 //!     kind: TxKind::Withdrawal,
 //!     client_id: ClientId(1),
 //!     tx_id: TxId(2),

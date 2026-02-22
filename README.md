@@ -8,6 +8,7 @@ A simple transaction processor that reads a CSV of transactions and outputs the 
 
 <p align="center">
   <a href="#usage">Usage</a> &middot;
+  <a href="#hot-path">Hot Path</a> &middot;
   <a href="#transaction-types">Transaction Types</a> &middot;
   <a href="#assumptions">Assumptions</a> &middot;
   <a href="#project-structure">Project Structure</a> &middot;
@@ -49,6 +50,30 @@ client,available,held,total,locked
 1,1.5000,0.0000,1.5000,false
 2,2.0000,0.0000,2.0000,false
 ```
+
+## Hot path
+
+Every transaction goes through the same path in the core ledger (`payments-core`, [`ledger.rs`](payments-core/src/ledger.rs)):
+
+1. **Validate** — The raw `Transaction` is checked against current state: amounts present and positive, no duplicate deposit IDs, account exists and is unlocked, sufficient funds for withdrawals, and correct dispute lifecycle for dispute/resolve/chargeback. If anything fails, an error is returned and nothing is written. On success, the crate produces a `ValidatedTransaction` that callers cannot construct; the type system enforces that only validated data goes forward.
+
+2. **Append to event log** — The validated transaction is recorded as an `Event` (a fact that happened) and pushed to the in-memory event log. Order is critical: we log before mutating state. In a production system this step would be a durable write (e.g. to Kafka) so that state can be rebuilt by replay.
+
+3. **Apply** — `apply_unchecked` updates ledger state (accounts, transaction records) using the validated transaction. No checks run here; they were all done in step 1. The name “unchecked” means “preconditions already proven by the type,” not “unsafe.”
+
+In code the hot path looks like this:
+
+```rust
+pub fn submit(&mut self, tx: Transaction) -> Result<(), LedgerError> {
+    let validated = self.validate(&tx)?;           // 1. Validate
+    self.event_log.push(Event::from(validated.clone()));  // 2. Log the fact
+    self.apply_unchecked(validated);                // 3. Update state
+    Ok(())
+}
+```
+
+Replay uses the same apply step without re-validating: `Ledger::replay(events)` replays the event log by pushing each event and calling `apply_unchecked` with the event’s transaction (trusted, since it was already applied once).
+
 
 ## Transaction Types
 
@@ -120,7 +145,7 @@ payment-processor/
 │   └── src/
 │       ├── lib.rs
 │       ├── types.rs        # ClientId, TxId, Account, Transaction, etc.
-│       ├── ledger.rs       # Ledger, process(), validate()
+│       ├── ledger.rs       # Ledger, submit(), validate()
 │       ├── error.rs        # LedgerError
 │       └── source.rs       # TransactionSource trait
 ├── src/                    # Binary crate (CLI + I/O)
@@ -167,8 +192,7 @@ This separation allows the caller to handle errors (log and continue) without th
 
 The ledger keeps an **event log** of every applied transaction (`Ledger::iter_events()` in payments-core). **Amounts in the event log are not normalized** — they are stored as received. Normalization is applied only when updating ledger state in apply.
 
-- **Replay:** `Ledger::from_events(events)` builds a ledger by replaying events in order (state rebuilt from scratch).
-- **Audit:** `Ledger::from_accounts_and_events(accounts, events)` builds a ledger from a snapshot of accounts and an event log for inspection; the internal deposit-record map is empty, so further dispute/resolve/chargeback processing may not be supported.
+- **Replay:** `Ledger::replay(events)` builds a ledger by replaying events in order (state rebuilt from scratch).
 
 ## Security
 

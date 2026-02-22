@@ -237,42 +237,21 @@ impl ValidatedTransaction {
 // Event - audit log entry (unnormalized)
 // ============================================================================
 
-/// A recorded event: a validated transaction that was applied to the ledger.
+/// A recorded event: a transaction that was applied to the ledger.
 ///
 /// **Amounts in the event log are not normalized.** They are stored exactly as received.
 /// Normalization is applied only when updating ledger state in [`apply_unchecked`](Ledger::apply_unchecked).
-/// Use [`Ledger::iter_events`] to read the log; use [`Ledger::from_events`] to replay and rebuild state.
+/// Use [`Ledger::iter_events`] to read the log; use [`Ledger::replay`] to replay and rebuild state.
 #[derive(Clone)]
 pub struct Event {
-    tx: ValidatedTransaction,
+    pub tx: Transaction,
 }
 
-impl Event {
-    fn from_validated(tx: ValidatedTransaction) -> Self {
-        Self { tx }
-    }
-    fn into_validated(self) -> ValidatedTransaction {
-        self.tx
-    }
-    /// Transaction kind (deposit, withdrawal, dispute, resolve, chargeback).
-    #[must_use]
-    pub fn kind(&self) -> TxKind {
-        self.tx.inner().kind
-    }
-    /// Client this event applies to.
-    #[must_use]
-    pub fn client_id(&self) -> ClientId {
-        self.tx.inner().client_id
-    }
-    /// Transaction id.
-    #[must_use]
-    pub fn tx_id(&self) -> TxId {
-        self.tx.inner().tx_id
-    }
-    /// Amount for deposit/withdrawal; `None` for dispute/resolve/chargeback. **Unnormalized** (as received).
-    #[must_use]
-    pub fn amount(&self) -> Option<Decimal> {
-        self.tx.inner().amount
+impl From<ValidatedTransaction> for Event {
+    fn from(validated: ValidatedTransaction) -> Self {
+        Self {
+            tx: validated.into_inner(),
+        }
     }
 }
 
@@ -282,7 +261,7 @@ impl Event {
 
 /// The core ledger that tracks all accounts and transactions.
 ///
-/// This is the main stateful type for the engine. Use [`process`](Ledger::process) as the primary
+/// This is the main stateful type for the engine. Use [`submit`](Ledger::submit) as the primary
 /// mutation API (it validates then applies each transaction).
 pub struct Ledger {
     accounts: HashMap<ClientId, Account>,
@@ -381,6 +360,18 @@ impl Ledger {
         Ok(ValidatedTransaction(tx.clone()))
     }
 
+    // -------------------------------------------------------------------------
+    // Hot path: submit → validate → append to event log → apply
+    // -------------------------------------------------------------------------
+    // 1. validate(tx) — All guards run here (amounts, duplicate tx_id, account state,
+    //    sufficient funds, dispute lifecycle). Returns ValidatedTransaction only on success;
+    //    callers cannot construct it, so invalid state cannot reach the next steps.
+    // 2. event_log.push(Event::from(validated)) — Record the fact before mutating state.
+    //    In production this would be a durable write (e.g. Kafka) so replay is possible.
+    // 3. apply_unchecked(validated) — Pure state update; no checks. Only called with
+    //    ValidatedTransaction, so the type system guarantees preconditions hold.
+    // -------------------------------------------------------------------------
+
     /// Validates and applies a transaction to the ledger.
     ///
     /// This is the only public mutation API. It ensures validation before application,
@@ -390,10 +381,9 @@ impl Ledger {
     ///
     /// Returns `Ok(())` if the transaction was applied successfully, or an error
     /// describing why the transaction was rejected.
-    pub fn process(&mut self, tx: Transaction) -> Result<(), LedgerError> {
+    pub fn submit(&mut self, tx: Transaction) -> Result<(), LedgerError> {
         let validated = self.validate(&tx)?;
-        self.event_log
-            .push(Event::from_validated(validated.clone()));
+        self.event_log.push(Event::from(validated.clone()));
         self.apply_unchecked(validated);
         Ok(())
     }
@@ -404,31 +394,16 @@ impl Ledger {
         self.event_log.iter()
     }
 
-    /// Builds a ledger by replaying events in order. State is rebuilt from scratch;
-    /// normalization is applied at apply time as in normal processing.
+    /// Reconstructs a [`Ledger`] by replaying a previously recorded event log in order.
     #[must_use]
-    pub fn from_events(events: impl IntoIterator<Item = Event>) -> Self {
+    pub fn replay(events: impl IntoIterator<Item = Event>) -> Self {
         let mut ledger = Self::new();
         for event in events {
-            ledger.event_log.push(event.clone());
-            ledger.apply_unchecked(event.into_validated());
+            let tx = event.tx.clone();
+            ledger.event_log.push(event);
+            ledger.apply_unchecked(ValidatedTransaction(tx));
         }
         ledger
-    }
-
-    /// Builds a ledger from a snapshot of accounts and an event log (for audit).
-    /// The `transactions` map is left empty, so further processing that depends on
-    /// existing deposit records (e.g. dispute/resolve/chargeback) may fail.
-    #[must_use]
-    pub fn from_accounts_and_events(
-        accounts: HashMap<ClientId, Account>,
-        events: impl IntoIterator<Item = Event>,
-    ) -> Self {
-        Self {
-            accounts,
-            transactions: HashMap::new(),
-            event_log: events.into_iter().collect(),
-        }
     }
 
     /// Applies a validated transaction. Only accepts [`ValidatedTransaction`], which can only
@@ -680,7 +655,7 @@ mod tests {
             tx_id: TxId(2),
             amount: Some(OVERFLOW_AMOUNT),
         };
-        assert!(matches!(ledger.process(tx), Err(LedgerError::Overflow)));
+        assert!(matches!(ledger.submit(tx), Err(LedgerError::Overflow)));
     }
 
     #[test]
@@ -696,7 +671,7 @@ mod tests {
             tx_id: TxId(1),
             amount: Some(dec!(1.0)),
         };
-        assert!(matches!(ledger.process(tx), Err(LedgerError::Overflow)));
+        assert!(matches!(ledger.submit(tx), Err(LedgerError::Overflow)));
     }
 
     #[test]
@@ -714,7 +689,7 @@ mod tests {
             tx_id: TxId(1),
             amount: None,
         };
-        assert!(matches!(ledger.process(tx), Err(LedgerError::Overflow)));
+        assert!(matches!(ledger.submit(tx), Err(LedgerError::Overflow)));
     }
 
     #[test]
@@ -732,7 +707,7 @@ mod tests {
             tx_id: TxId(1),
             amount: None,
         };
-        assert!(matches!(ledger.process(tx), Err(LedgerError::Overflow)));
+        assert!(matches!(ledger.submit(tx), Err(LedgerError::Overflow)));
     }
 
     #[test]
@@ -750,7 +725,7 @@ mod tests {
             tx_id: TxId(1),
             amount: None,
         };
-        assert!(matches!(ledger.process(tx), Err(LedgerError::Overflow)));
+        assert!(matches!(ledger.submit(tx), Err(LedgerError::Overflow)));
     }
 
     // ========================================================================
@@ -800,7 +775,7 @@ mod tests {
             amount: Some(dec!(5.0)),
         };
 
-        assert!(ledger.process(tx).is_ok());
+        assert!(ledger.submit(tx).is_ok());
 
         let account = ledger.accounts.get(&ClientId(1)).unwrap();
         assert_eq!(account.available, dec!(5.0));
@@ -817,7 +792,7 @@ mod tests {
             tx_id: TxId(1),
             amount: Some(dec!(5.0)),
         };
-        ledger.process(deposit).unwrap();
+        ledger.submit(deposit).unwrap();
 
         let withdrawal = Transaction {
             kind: TxKind::Withdrawal,
@@ -825,7 +800,7 @@ mod tests {
             tx_id: TxId(2),
             amount: Some(dec!(2.0)),
         };
-        assert!(ledger.process(withdrawal).is_ok());
+        assert!(ledger.submit(withdrawal).is_ok());
 
         let account = ledger.accounts.get(&ClientId(1)).unwrap();
         assert_eq!(account.available, dec!(3.0));
@@ -840,7 +815,7 @@ mod tests {
             tx_id: TxId(1),
             amount: Some(dec!(1.0)),
         };
-        ledger.process(deposit).unwrap();
+        ledger.submit(deposit).unwrap();
 
         let withdrawal = Transaction {
             kind: TxKind::Withdrawal,
@@ -849,7 +824,7 @@ mod tests {
             amount: Some(dec!(2.0)),
         };
         assert!(matches!(
-            ledger.process(withdrawal),
+            ledger.submit(withdrawal),
             Err(LedgerError::InsufficientFunds(_))
         ));
     }
@@ -864,7 +839,7 @@ mod tests {
             tx_id: TxId(1),
             amount: Some(dec!(5.0)),
         };
-        ledger.process(deposit).unwrap();
+        ledger.submit(deposit).unwrap();
 
         let dispute = Transaction {
             kind: TxKind::Dispute,
@@ -872,7 +847,7 @@ mod tests {
             tx_id: TxId(1),
             amount: None,
         };
-        assert!(ledger.process(dispute).is_ok());
+        assert!(ledger.submit(dispute).is_ok());
 
         let account = ledger.accounts.get(&ClientId(1)).unwrap();
         assert_eq!(account.available, dec!(0.0));
@@ -885,7 +860,7 @@ mod tests {
             tx_id: TxId(1),
             amount: None,
         };
-        assert!(ledger.process(resolve).is_ok());
+        assert!(ledger.submit(resolve).is_ok());
 
         let account = ledger.accounts.get(&ClientId(1)).unwrap();
         assert_eq!(account.available, dec!(5.0));
@@ -904,7 +879,7 @@ mod tests {
             tx_id: TxId(1),
             amount: Some(dec!(5.0)),
         };
-        ledger.process(deposit).unwrap();
+        ledger.submit(deposit).unwrap();
 
         let dispute = Transaction {
             kind: TxKind::Dispute,
@@ -912,7 +887,7 @@ mod tests {
             tx_id: TxId(1),
             amount: None,
         };
-        ledger.process(dispute).unwrap();
+        ledger.submit(dispute).unwrap();
 
         let chargeback = Transaction {
             kind: TxKind::Chargeback,
@@ -920,7 +895,7 @@ mod tests {
             tx_id: TxId(1),
             amount: None,
         };
-        assert!(ledger.process(chargeback).is_ok());
+        assert!(ledger.submit(chargeback).is_ok());
 
         let account = ledger.accounts.get(&ClientId(1)).unwrap();
         assert!(account.locked);
@@ -939,7 +914,7 @@ mod tests {
             tx_id: TxId(1),
             amount: Some(dec!(5.0)),
         };
-        ledger.process(deposit).unwrap();
+        ledger.submit(deposit).unwrap();
 
         let dispute = Transaction {
             kind: TxKind::Dispute,
@@ -947,7 +922,7 @@ mod tests {
             tx_id: TxId(1),
             amount: None,
         };
-        ledger.process(dispute).unwrap();
+        ledger.submit(dispute).unwrap();
 
         let chargeback = Transaction {
             kind: TxKind::Chargeback,
@@ -955,7 +930,7 @@ mod tests {
             tx_id: TxId(1),
             amount: None,
         };
-        ledger.process(chargeback).unwrap();
+        ledger.submit(chargeback).unwrap();
 
         let deposit2 = Transaction {
             kind: TxKind::Deposit,
@@ -964,7 +939,7 @@ mod tests {
             amount: Some(dec!(1.0)),
         };
         assert!(matches!(
-            ledger.process(deposit2),
+            ledger.submit(deposit2),
             Err(LedgerError::AccountLocked(_))
         ));
     }
@@ -979,7 +954,7 @@ mod tests {
             tx_id: TxId(1),
             amount: Some(dec!(5.0)),
         };
-        ledger.process(deposit).unwrap();
+        ledger.submit(deposit).unwrap();
 
         let resolve = Transaction {
             kind: TxKind::Resolve,
@@ -988,7 +963,7 @@ mod tests {
             amount: None,
         };
         assert!(matches!(
-            ledger.process(resolve),
+            ledger.submit(resolve),
             Err(LedgerError::InvalidTxState(_, TxState::Active))
         ));
     }
@@ -1003,7 +978,7 @@ mod tests {
             tx_id: TxId(1),
             amount: Some(dec!(5.0)),
         };
-        ledger.process(deposit1).unwrap();
+        ledger.submit(deposit1).unwrap();
 
         let deposit2 = Transaction {
             kind: TxKind::Deposit,
@@ -1012,7 +987,7 @@ mod tests {
             amount: Some(dec!(3.0)),
         };
         assert!(matches!(
-            ledger.process(deposit2),
+            ledger.submit(deposit2),
             Err(LedgerError::DuplicateTxId(_))
         ));
     }
@@ -1027,7 +1002,7 @@ mod tests {
             tx_id: TxId(1),
             amount: Some(dec!(5.0)),
         };
-        ledger.process(deposit).unwrap();
+        ledger.submit(deposit).unwrap();
 
         ledger.accounts.insert(ClientId(2), Account::default());
 
@@ -1038,7 +1013,7 @@ mod tests {
             amount: None,
         };
         assert!(matches!(
-            ledger.process(dispute),
+            ledger.submit(dispute),
             Err(LedgerError::TxClientMismatch)
         ));
     }
@@ -1053,7 +1028,7 @@ mod tests {
             amount: Some(dec!(-1.0)),
         };
         assert!(matches!(
-            ledger.process(deposit),
+            ledger.submit(deposit),
             Err(LedgerError::InvalidAmount)
         ));
     }
@@ -1068,7 +1043,7 @@ mod tests {
             tx_id: TxId(1),
             amount: Some(dec!(10.0)),
         };
-        ledger.process(deposit).unwrap();
+        ledger.submit(deposit).unwrap();
         assert_eq!(
             ledger.accounts.get(&ClientId(1)).unwrap().total().unwrap(),
             dec!(10.0)
@@ -1080,7 +1055,7 @@ mod tests {
             tx_id: TxId(2),
             amount: Some(dec!(3.0)),
         };
-        ledger.process(withdrawal).unwrap();
+        ledger.submit(withdrawal).unwrap();
         assert_eq!(
             ledger.accounts.get(&ClientId(1)).unwrap().total().unwrap(),
             dec!(7.0)
@@ -1092,7 +1067,7 @@ mod tests {
             tx_id: TxId(3),
             amount: Some(dec!(5.0)),
         };
-        ledger.process(deposit2).unwrap();
+        ledger.submit(deposit2).unwrap();
         assert_eq!(
             ledger.accounts.get(&ClientId(1)).unwrap().total().unwrap(),
             dec!(12.0)
@@ -1104,7 +1079,7 @@ mod tests {
             tx_id: TxId(3),
             amount: None,
         };
-        ledger.process(dispute).unwrap();
+        ledger.submit(dispute).unwrap();
         let account = ledger.accounts.get(&ClientId(1)).unwrap();
         assert_eq!(account.available, dec!(7.0));
         assert_eq!(account.held, dec!(5.0));
@@ -1116,7 +1091,7 @@ mod tests {
             tx_id: TxId(3),
             amount: None,
         };
-        ledger.process(resolve).unwrap();
+        ledger.submit(resolve).unwrap();
         let account = ledger.accounts.get(&ClientId(1)).unwrap();
         assert_eq!(account.available, dec!(12.0));
         assert_eq!(account.held, dec!(0.0));
@@ -1138,7 +1113,7 @@ mod tests {
         };
         // Should fail because account doesn't exist (treated as locked/missing)
         assert!(matches!(
-            ledger.process(withdrawal),
+            ledger.submit(withdrawal),
             Err(LedgerError::AccountLocked(_))
         ));
     }
@@ -1155,7 +1130,7 @@ mod tests {
             tx_id: TxId(1),
             amount: Some(dec!(10.0)),
         };
-        ledger.process(deposit).unwrap();
+        ledger.submit(deposit).unwrap();
 
         let withdrawal = Transaction {
             kind: TxKind::Withdrawal,
@@ -1163,7 +1138,7 @@ mod tests {
             tx_id: TxId(2),
             amount: Some(dec!(5.0)),
         };
-        ledger.process(withdrawal).unwrap();
+        ledger.submit(withdrawal).unwrap();
 
         // Now available = 5, but we dispute the original 10
         let dispute = Transaction {
@@ -1172,7 +1147,7 @@ mod tests {
             tx_id: TxId(1),
             amount: None,
         };
-        assert!(ledger.process(dispute).is_ok());
+        assert!(ledger.submit(dispute).is_ok());
 
         // Available goes negative, held is 10, total is still 5
         let account = ledger.accounts.get(&ClientId(1)).unwrap();
@@ -1191,7 +1166,7 @@ mod tests {
             tx_id: TxId(1),
             amount: Some(dec!(10.0)),
         };
-        ledger.process(deposit1).unwrap();
+        ledger.submit(deposit1).unwrap();
 
         let deposit2 = Transaction {
             kind: TxKind::Deposit,
@@ -1199,7 +1174,7 @@ mod tests {
             tx_id: TxId(2),
             amount: Some(dec!(20.0)),
         };
-        ledger.process(deposit2).unwrap();
+        ledger.submit(deposit2).unwrap();
 
         // Dispute only the first deposit
         let dispute = Transaction {
@@ -1208,7 +1183,7 @@ mod tests {
             tx_id: TxId(1),
             amount: None,
         };
-        ledger.process(dispute).unwrap();
+        ledger.submit(dispute).unwrap();
 
         let account = ledger.accounts.get(&ClientId(1)).unwrap();
         assert_eq!(account.available, dec!(20.0)); // Only deposit2 available
@@ -1227,7 +1202,7 @@ mod tests {
             tx_id: TxId(1),
             amount: Some(dec!(5.0)),
         };
-        ledger.process(deposit1).unwrap();
+        ledger.submit(deposit1).unwrap();
 
         let deposit2 = Transaction {
             kind: TxKind::Deposit,
@@ -1235,7 +1210,7 @@ mod tests {
             tx_id: TxId(2),
             amount: Some(dec!(10.0)),
         };
-        ledger.process(deposit2).unwrap();
+        ledger.submit(deposit2).unwrap();
 
         // Dispute and chargeback first deposit
         let dispute = Transaction {
@@ -1244,7 +1219,7 @@ mod tests {
             tx_id: TxId(1),
             amount: None,
         };
-        ledger.process(dispute).unwrap();
+        ledger.submit(dispute).unwrap();
 
         let chargeback = Transaction {
             kind: TxKind::Chargeback,
@@ -1252,7 +1227,7 @@ mod tests {
             tx_id: TxId(1),
             amount: None,
         };
-        ledger.process(chargeback).unwrap();
+        ledger.submit(chargeback).unwrap();
 
         // Account is now locked, try to withdraw
         let withdrawal = Transaction {
@@ -1262,7 +1237,7 @@ mod tests {
             amount: Some(dec!(5.0)),
         };
         assert!(matches!(
-            ledger.process(withdrawal),
+            ledger.submit(withdrawal),
             Err(LedgerError::AccountLocked(_))
         ));
     }
@@ -1277,7 +1252,7 @@ mod tests {
             tx_id: TxId(1),
             amount: Some(dec!(10.0)),
         };
-        ledger.process(deposit).unwrap();
+        ledger.submit(deposit).unwrap();
 
         let dispute = Transaction {
             kind: TxKind::Dispute,
@@ -1285,7 +1260,7 @@ mod tests {
             tx_id: TxId(1),
             amount: None,
         };
-        ledger.process(dispute).unwrap();
+        ledger.submit(dispute).unwrap();
 
         let resolve = Transaction {
             kind: TxKind::Resolve,
@@ -1293,7 +1268,7 @@ mod tests {
             tx_id: TxId(1),
             amount: None,
         };
-        ledger.process(resolve).unwrap();
+        ledger.submit(resolve).unwrap();
 
         // Try to dispute the resolved transaction
         let dispute_again = Transaction {
@@ -1303,7 +1278,7 @@ mod tests {
             amount: None,
         };
         assert!(matches!(
-            ledger.process(dispute_again),
+            ledger.submit(dispute_again),
             Err(LedgerError::InvalidTxState(_, TxState::Resolved))
         ));
     }
@@ -1318,7 +1293,7 @@ mod tests {
             tx_id: TxId(1),
             amount: Some(dec!(10.0)),
         };
-        ledger.process(deposit).unwrap();
+        ledger.submit(deposit).unwrap();
 
         let dispute = Transaction {
             kind: TxKind::Dispute,
@@ -1326,7 +1301,7 @@ mod tests {
             tx_id: TxId(1),
             amount: None,
         };
-        ledger.process(dispute).unwrap();
+        ledger.submit(dispute).unwrap();
 
         let chargeback = Transaction {
             kind: TxKind::Chargeback,
@@ -1334,7 +1309,7 @@ mod tests {
             tx_id: TxId(1),
             amount: None,
         };
-        ledger.process(chargeback).unwrap();
+        ledger.submit(chargeback).unwrap();
 
         // Account is locked, but even if it weren't, the tx state should prevent dispute
         // We need a second deposit on client 2 to test the state
@@ -1344,7 +1319,7 @@ mod tests {
             tx_id: TxId(2),
             amount: Some(dec!(5.0)),
         };
-        ledger.process(deposit2).unwrap();
+        ledger.submit(deposit2).unwrap();
 
         // The original tx is ChargedBack - verify state machine
         let tx_record = ledger.transactions.get(&TxId(1)).unwrap();
@@ -1361,7 +1336,7 @@ mod tests {
             tx_id: TxId(1),
             amount: Some(dec!(10.0)),
         };
-        ledger.process(deposit).unwrap();
+        ledger.submit(deposit).unwrap();
 
         let dispute = Transaction {
             kind: TxKind::Dispute,
@@ -1369,7 +1344,7 @@ mod tests {
             tx_id: TxId(1),
             amount: None,
         };
-        ledger.process(dispute).unwrap();
+        ledger.submit(dispute).unwrap();
 
         let chargeback = Transaction {
             kind: TxKind::Chargeback,
@@ -1377,7 +1352,7 @@ mod tests {
             tx_id: TxId(1),
             amount: None,
         };
-        ledger.process(chargeback).unwrap();
+        ledger.submit(chargeback).unwrap();
 
         // Try to chargeback again - should fail because tx is now ChargedBack, not Disputed
         let chargeback_again = Transaction {
@@ -1388,7 +1363,7 @@ mod tests {
         };
         // Account is locked, so this will fail with AccountLocked first
         assert!(matches!(
-            ledger.process(chargeback_again),
+            ledger.submit(chargeback_again),
             Err(LedgerError::AccountLocked(_))
         ));
     }
@@ -1404,7 +1379,7 @@ mod tests {
             tx_id: TxId(1),
             amount: Some(dec!(10.0)),
         };
-        assert!(ledger.process(deposit).is_ok());
+        assert!(ledger.submit(deposit).is_ok());
 
         let account = ledger.accounts.get(&ClientId(1)).unwrap();
         assert_eq!(account.available, dec!(10.0));
@@ -1417,7 +1392,7 @@ mod tests {
             amount: Some(dec!(20.0)),
         };
         assert!(matches!(
-            ledger.process(withdrawal),
+            ledger.submit(withdrawal),
             Err(LedgerError::InsufficientFunds(_))
         ));
 

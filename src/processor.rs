@@ -31,7 +31,7 @@ where
         for (row, result) in self.source.enumerate() {
             match result {
                 Ok(tx) => {
-                    if let Err(e) = self.ledger.process(tx) {
+                    if let Err(e) = self.ledger.submit(tx) {
                         eprintln!("warn: row {}: {e}", row + 2);
                     }
                 }
