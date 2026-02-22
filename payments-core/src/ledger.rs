@@ -1,4 +1,4 @@
-use crate::error::LedgerError;
+use crate::error::{EventLogError, LedgerError};
 use crate::types::{Account, ClientId, Transaction, TxId, TxKind, TxRecord, TxState};
 use rust_decimal::prelude::*;
 use rust_decimal::Decimal;
@@ -228,9 +228,6 @@ impl ValidatedTransaction {
     fn into_inner(self) -> Transaction {
         self.0
     }
-    fn inner(&self) -> &Transaction {
-        &self.0
-    }
 }
 
 // ============================================================================
@@ -256,6 +253,45 @@ impl From<ValidatedTransaction> for Event {
 }
 
 // ============================================================================
+// EventLog - write-ahead log (failable append models durable write)
+// ============================================================================
+
+/// Write-ahead event log. Append must succeed before applying to in-memory state;
+/// if [`append`](EventLog::append) fails, the caller must not apply the event (WAL contract).
+/// In production the backing store would be durable (e.g. Kafka/disk).
+pub struct EventLog {
+    events: Vec<Event>,
+}
+
+impl EventLog {
+    /// Creates an empty event log.
+    #[must_use]
+    pub fn new() -> Self {
+        Self { events: Vec::new() }
+    }
+
+    /// Appends an event to the log. In production this would be a durable write.
+    /// If this returns an error, the caller must **not** apply the event to ledger state.
+    pub fn append(&mut self, event: Event) -> Result<(), EventLogError> {
+        // In production this would be a durable write to Kafka/disk.
+        // If this fails we must NOT apply the event to in-memory state.
+        self.events.push(event);
+        Ok(())
+    }
+
+    /// Returns an iterator over the recorded events.
+    pub fn iter(&self) -> impl Iterator<Item = &Event> {
+        self.events.iter()
+    }
+}
+
+impl Default for EventLog {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ============================================================================
 // Ledger - the main state container
 // ============================================================================
 
@@ -266,7 +302,7 @@ impl From<ValidatedTransaction> for Event {
 pub struct Ledger {
     accounts: HashMap<ClientId, Account>,
     transactions: HashMap<TxId, TxRecord>,
-    event_log: Vec<Event>,
+    event_log: EventLog,
 }
 
 impl Ledger {
@@ -276,7 +312,7 @@ impl Ledger {
         Self {
             accounts: HashMap::new(),
             transactions: HashMap::new(),
-            event_log: Vec::new(),
+            event_log: EventLog::new(),
         }
     }
 
@@ -366,8 +402,9 @@ impl Ledger {
     // 1. validate(tx) — All guards run here (amounts, duplicate tx_id, account state,
     //    sufficient funds, dispute lifecycle). Returns ValidatedTransaction only on success;
     //    callers cannot construct it, so invalid state cannot reach the next steps.
-    // 2. event_log.push(Event::from(validated)) — Record the fact before mutating state.
-    //    In production this would be a durable write (e.g. Kafka) so replay is possible.
+    // 2. event_log.append(event) — Record the fact before mutating state. Must succeed
+    //    before apply; if append fails we return early and never mutate state (WAL contract).
+    //    In production this would be a durable write (e.g. Kafka).
     // 3. apply_unchecked(validated) — Pure state update; no checks. Only called with
     //    ValidatedTransaction, so the type system guarantees preconditions hold.
     // -------------------------------------------------------------------------
@@ -377,33 +414,35 @@ impl Ledger {
     /// This is the only public mutation API. It ensures validation before application,
     /// making it impossible to corrupt ledger state with invalid transactions.
     ///
-    /// Once a tx has been successfully validated it is added to the event log prior to updating state
+    /// Once a tx has been successfully validated it is appended to the event log prior to
+    /// updating state. If the event log append fails, state is not updated (write-ahead contract).
     ///
     /// Returns `Ok(())` if the transaction was applied successfully, or an error
-    /// describing why the transaction was rejected.
+    /// describing why the transaction was rejected (validation or event log write).
     pub fn submit(&mut self, tx: Transaction) -> Result<(), LedgerError> {
         let validated = self.validate(&tx)?;
-        self.event_log.push(Event::from(validated.clone()));
+        let event = Event::from(validated.clone());
+        self.event_log.append(event)?; // must succeed before apply
         self.apply_unchecked(validated);
         Ok(())
     }
 
-    /// Returns an iterator over the event log (validated transactions as applied).
+    /// Returns an iterator over the event log (recorded events as applied).
     /// **Amounts in events are unnormalized** (stored as received).
     pub fn iter_events(&self) -> impl Iterator<Item = &Event> {
         self.event_log.iter()
     }
 
     /// Reconstructs a [`Ledger`] by replaying a previously recorded event log in order.
-    #[must_use]
-    pub fn replay(events: impl IntoIterator<Item = Event>) -> Self {
+    /// Returns an error if the event log append fails (e.g. durable write unavailable).
+    pub fn replay(events: impl IntoIterator<Item = Event>) -> Result<Self, LedgerError> {
         let mut ledger = Self::new();
         for event in events {
             let tx = event.tx.clone();
-            ledger.event_log.push(event);
+            ledger.event_log.append(event)?;
             ledger.apply_unchecked(ValidatedTransaction(tx));
         }
-        ledger
+        Ok(ledger)
     }
 
     /// Applies a validated transaction. Only accepts [`ValidatedTransaction`], which can only

@@ -1,11 +1,23 @@
 use crate::types::{ClientId, TxId, TxState};
 use thiserror::Error;
 
+/// Error when the event log cannot durably record an event (e.g. write to Kafka/disk failed).
+/// If this occurs, the transaction must not be applied to in-memory state (WAL contract).
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum EventLogError {
+    #[error("event log write failed")]
+    WriteFailed,
+}
+
 /// Errors that can occur when processing transactions against the ledger.
 /// All errors represent no-op conditions - the transaction is rejected but processing continues.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum LedgerError {
+    #[error(transparent)]
+    EventLog(#[from] EventLogError),
+
     #[error("account is locked: client {0}")]
     AccountLocked(ClientId),
 

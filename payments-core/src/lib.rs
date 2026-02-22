@@ -42,7 +42,7 @@ pub mod ledger;
 pub mod source;
 pub mod types;
 
-pub use error::LedgerError;
-pub use ledger::{Event, Ledger};
+pub use error::{EventLogError, LedgerError};
+pub use ledger::{Event, EventLog, Ledger};
 pub use source::TransactionSource;
 pub use types::{Account, ClientId, Transaction, TxId, TxKind, TxRecord, TxState};

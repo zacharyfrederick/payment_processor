@@ -57,7 +57,7 @@ Every transaction goes through the same path in the core ledger (`payments-core`
 
 1. **Validate** — The raw `Transaction` is checked against current state: amounts present and positive, no duplicate deposit IDs, account exists and is unlocked, sufficient funds for withdrawals, and correct dispute lifecycle for dispute/resolve/chargeback. If anything fails, an error is returned and nothing is written. On success, the crate produces a `ValidatedTransaction` that callers cannot construct; the type system enforces that only validated data goes forward.
 
-2. **Append to event log** — The validated transaction is recorded as an `Event` (a fact that happened) and pushed to the in-memory event log. Order is critical: we log before mutating state. In a production system this step would be a durable write (e.g. to Kafka) so that state can be rebuilt by replay.
+2. **Append to event log** — The validated transaction is recorded as an `Event` (a fact that happened) and appended to the in-memory event log. Order is critical: we log before mutating state. Append is failable (returns `Result`); if it fails, state is not updated. In a production system this step would be a durable write (e.g. to Kafka) so that state can be rebuilt by replay.
 
 3. **Apply** — `apply_unchecked` updates ledger state (accounts, transaction records) using the validated transaction. No checks run here; they were all done in step 1. The name “unchecked” means “preconditions already proven by the type,” not “unsafe.”
 
@@ -65,14 +65,15 @@ In code the hot path looks like this:
 
 ```rust
 pub fn submit(&mut self, tx: Transaction) -> Result<(), LedgerError> {
-    let validated = self.validate(&tx)?;           // 1. Validate
-    self.event_log.push(Event::from(validated.clone()));  // 2. Log the fact
+    let validated = self.validate(&tx)?;            // 1. Validate
+    let event = Event::from(validated.clone());
+    self.event_log.append(event)?;                   // 2. Log the fact (must succeed before apply)
     self.apply_unchecked(validated);                // 3. Update state
     Ok(())
 }
 ```
 
-Replay uses the same apply step without re-validating: `Ledger::replay(events)` replays the event log by pushing each event and calling `apply_unchecked` with the event’s transaction (trusted, since it was already applied once).
+Replay uses the same apply step without re-validating: `Ledger::replay(events)` replays the event log by appending each event and calling `apply_unchecked` with the event’s transaction (trusted, since it was already applied once).
 
 
 ## Transaction Types
@@ -181,8 +182,8 @@ The `payments-core` crate has no I/O dependencies. All validation and state muta
 
 Transactions are processed in three phases:
 1. `validate()` — checks all invariants, returns a validated tx (only creatable inside the crate)
-2.  Create an event from the validated tx and then append it to the log
-2. `apply_unchecked()` — performs the mutation, only called with a validated tx
+2. Create an event from the validated tx and append it to the event log (failable; must succeed before apply)
+3. `apply_unchecked()` — performs the mutation, only called with a validated tx
 
 NO CHECKS ARE PERFORMED IN APPLY_UNCHECKED. THEY PURELY UPDATE STATE. The type system enforces that only validated transactions reach apply and the event log.
 
