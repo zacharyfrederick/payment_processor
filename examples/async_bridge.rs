@@ -68,7 +68,7 @@ mod async_bridge {
         let processor = tokio::spawn(async move {
             let mut ledger = Ledger::new();
             while let Some(transaction) = tx_recv.recv().await {
-                if let Err(e) = ledger.process(transaction) {
+                if let Err(e) = ledger.submit(transaction) {
                     eprintln!("warn: {e}");
                 }
             }
